@@ -1,3 +1,4 @@
+import re
 import time
 import json
 import logging
@@ -105,16 +106,14 @@ async def allow_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         target_id = str(int(context.args[0]))
-        name = " ".join(context.args[1:]) if len(context.args) > 1 else "Unknown"
         users = load_users()
         users[target_id] = {
-            "name": name,
             "granted": datetime.now().strftime("%Y-%m-%d %H:%M")
         }
         save_users(users)
-        await update.message.reply_text(f"✅ Access granted to {name} (ID: {target_id})")
+        await update.message.reply_text(f"✅ Access granted to ID: {target_id}")
     except:
-        await update.message.reply_text("Use: /allow <user_id> <name>")
+        await update.message.reply_text("Use: /allow 123456789")
 
 async def revoke_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -141,8 +140,101 @@ async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     lines = ["👥 Approved Users\n"]
     for uid, info in users.items():
-        lines.append(f"• {info.get('name', 'Unknown')} (ID: {uid})\n  Granted: {info.get('granted', '—')}")
+        lines.append(f"• ID: {uid}\n  Granted: {info.get('granted', '—')}")
     await update.message.reply_text("\n".join(lines))
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🧾 ORDER PARSER
+# Detects ML user ID + server ID + product
+# from a forwarded order message
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def parse_order(text):
+    numbers = [int(n) for n in re.findall(r'\b(\d+)\b', text)]
+    lower = text.lower()
+
+    # Detect product first
+    product_type = None
+    product_key = None
+
+    # Check dd
+    dd_match = re.search(r'\bdd\s*(\d+)', lower)
+    if dd_match:
+        amt = int(dd_match.group(1))
+        if amt in dd_data:
+            product_type = 'dd'
+            product_key = amt
+
+    # Check wp / tp
+    if not product_type:
+        for key in special_items:
+            if re.search(rf'\b{key}\b', lower):
+                product_type = 'special'
+                product_key = key
+                break
+
+    # Check diamond amount
+    if not product_type:
+        for n in numbers:
+            if n in data:
+                product_type = 'diamond'
+                product_key = n
+                break
+
+    if not product_type:
+        return None
+
+    # Find user ID (number > 10000, not the product)
+    non_product = [n for n in numbers if n != product_key and n > 10000]
+    if not non_product:
+        return None
+    user_id = max(non_product)
+
+    # Find server ID (remaining number < 10000, not product)
+    server_candidates = [n for n in numbers if n != product_key and n != user_id and n < 10000]
+    server_id = server_candidates[0] if server_candidates else None
+
+    return product_type, product_key, user_id, server_id
+
+def build_receipt(product_type, product_key, user_id, server_id):
+    global rate_php, rate_br
+    now = datetime.now().strftime("%d %b %Y - %H:%M")
+    server_line = f"🌐 Server: {server_id}\n" if server_id else ""
+
+    if product_type == 'diamond':
+        combo, php_coins, br_coins = data[product_key]
+        total = int(php_coins * rate_php + br_coins * rate_br)
+        packs = "\n".join(f"  • {p}" for p in combo)
+        return (
+            f"🧾 Receipt\n"
+            f"📅 {now}\n\n"
+            f"👤 ML ID: {user_id}\n"
+            f"{server_line}"
+            f"💎 {product_key} Diamonds\n\n"
+            f"Packs used:\n{packs}\n\n"
+            f"💰 Total: {total:,} MMK"
+        )
+    elif product_type == 'dd':
+        label, br_coins = dd_data[product_key]
+        total = int(br_coins * rate_br)
+        return (
+            f"🧾 Receipt\n"
+            f"📅 {now}\n\n"
+            f"👤 ML ID: {user_id}\n"
+            f"{server_line}"
+            f"🔷 {label}\n\n"
+            f"💰 Total: {total:,} MMK"
+        )
+    elif product_type == 'special':
+        label, br_coins = special_items[product_key]
+        total = int(br_coins * rate_br)
+        return (
+            f"🧾 Receipt\n"
+            f"📅 {now}\n\n"
+            f"👤 ML ID: {user_id}\n"
+            f"{server_line}"
+            f"🎫 {label}\n\n"
+            f"💰 Total: {total:,} MMK"
+        )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 💎 HANDLE ALL MESSAGES
@@ -152,18 +244,27 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     global rate_php, rate_br
-    text = update.message.text.strip().lower()
+    text = update.message.text.strip()
+    lower = text.lower()
+
+    # 🧾 Order detection — message contains a large ID + product
+    order = parse_order(text)
+    if order:
+        product_type, product_key, user_id, server_id = order
+        receipt = build_receipt(product_type, product_key, user_id, server_id)
+        await update.message.reply_text(receipt)
+        return
 
     # 🎫 Special items: wp / tp
-    if text in special_items:
-        label, br_coins = special_items[text]
+    if lower in special_items:
+        label, br_coins = special_items[lower]
         total = int(br_coins * rate_br)
         await update.message.reply_text(f"🎫 {label}\n\n💰 {total} MMK")
         return
 
     # 🔷 Double Diamond: "dd 250" or "dd250"
-    if text.startswith("dd"):
-        num_part = text[2:].strip()
+    if lower.startswith("dd"):
+        num_part = lower[2:].strip()
         try:
             amount = int(num_part)
             if amount in dd_data:
@@ -178,7 +279,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 💎 Regular diamonds
     try:
-        target = int(text)
+        target = int(lower)
         if target in data:
             combo, php_coins, br_coins = data[target]
             total = int(php_coins * rate_php + br_coins * rate_br)
@@ -195,25 +296,28 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 💰 SET RATE (admin only)
+# 💰 SET RATES (admin only)
+# /setphp 84.5   /setbr 85.0
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-async def set_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_php(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         return
-    global rate_php, rate_br
+    global rate_php
     try:
-        kind = context.args[0].lower()
-        value = float(context.args[1])
-        if kind == "php":
-            rate_php = value
-            await update.message.reply_text(f"✅ PHP Rate = {rate_php}")
-        elif kind == "br":
-            rate_br = value
-            await update.message.reply_text(f"✅ BR Rate = {rate_br}")
-        else:
-            await update.message.reply_text("Use: /set php 84.5  or  /set br 85.0")
+        rate_php = float(context.args[0])
+        await update.message.reply_text(f"✅ PHP Rate = {rate_php}")
     except:
-        await update.message.reply_text("Use: /set php 84.5  or  /set br 85.0")
+        await update.message.reply_text("Use: /setphp 84.5")
+
+async def set_br(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        return
+    global rate_br
+    try:
+        rate_br = float(context.args[0])
+        await update.message.reply_text(f"✅ BR Rate = {rate_br}")
+    except:
+        await update.message.reply_text("Use: /setbr 85.0")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📋 LIST (allowed users)
@@ -256,14 +360,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎫 Weekly Pass — send: wp\n"
         "🎫 Twinlight Pass — send: tp\n\n"
         "/list — see all prices\n"
-        "/set php 84.5 — update PHP rate\n"
-        "/set br 85.0 — update BR rate"
+        "/setphp 84.5 — update PHP rate\n"
+        "/setbr 85.0 — update BR rate"
     )
 
 def build_app():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("set", set_rate))
+    app.add_handler(CommandHandler("setphp", set_php))
+    app.add_handler(CommandHandler("setbr", set_br))
     app.add_handler(CommandHandler("list", list_items))
     app.add_handler(CommandHandler("allow", allow_user))
     app.add_handler(CommandHandler("revoke", revoke_user))
