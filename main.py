@@ -11,10 +11,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from playwright.async_api import async_playwright
 
 # =========================
-# 🔧 FORCE INSTALL PLAYWRIGHT
+# 🔧 INSTALL PLAYWRIGHT
 # =========================
-if not os.path.exists("/root/.cache/ms-playwright"):
-    subprocess.run(["playwright", "install", "chromium"])
+subprocess.run(["playwright", "install", "chromium"])
 
 # =========================
 # 🔑 CONFIG
@@ -62,7 +61,7 @@ diamond_data = {
 }
 
 # =========================
-# 🎫 PASSES (ADDED)
+# 🎫 PASSES
 # =========================
 special_products = {
     "wp": (["Weekly Pass"], 0, 76),
@@ -84,9 +83,7 @@ def mmk(x):
 # ▶️ START
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"🤖 Bot Ready\n🆔 {update.effective_user.id}"
-    )
+    await update.message.reply_text(f"🤖 Bot Ready\n🆔 {update.effective_user.id}")
 
 # =========================
 # 📦 LIST
@@ -140,7 +137,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
 
 # =========================
-# ⚙️ RECHARGE
+# ⚙️ RECHARGE (DEBUG)
 # =========================
 async def recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
@@ -154,37 +151,58 @@ async def recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage:\n/recharge UID ZONE PRODUCT QTY")
         return
 
-    await update.message.reply_text("🔄 Processing...")
+    await update.message.reply_text("🔄 Step 1: Starting...")
 
     try:
         async with async_playwright() as p:
+            await update.message.reply_text("🔄 Step 2: Launch browser...")
+
             browser = await p.chromium.launch(
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
             )
 
             page = await browser.new_page()
-            await page.goto("https://www.smile.one")
+
+            await update.message.reply_text("🔄 Step 3: Open site...")
+            await page.goto("https://www.smile.one", timeout=60000)
 
             await page.wait_for_timeout(5000)
 
+            await update.message.reply_text("🔄 Step 4: Fill UID...")
             await page.get_by_placeholder("User ID").fill(uid)
             await page.get_by_placeholder("Zone ID").fill(zone)
 
-            await page.mouse.click(100, 100)
             await asyncio.sleep(3)
 
             packs, php, br = diamond_data[product]
 
+            await update.message.reply_text("🔄 Step 5: Select packs...")
+
             for p_name in packs:
-                text = p_name.split(" ")[0]
-                await page.get_by_text(text).first.click()
-                await asyncio.sleep(1)
+                try:
+                    text = p_name.split(" ")[0]
+                    await page.get_by_text(text).first.click(timeout=5000)
+                    await asyncio.sleep(1.5)
+                except:
+                    await update.message.reply_text(f"⚠️ Pack not found: {p_name}")
 
-            await page.get_by_text("SmileCoin").click()
-            await asyncio.sleep(1)
+            await update.message.reply_text("🔄 Step 6: Payment...")
 
-            await page.get_by_text("Buy now").click()
+            try:
+                await page.get_by_text("SmileCoin").click(timeout=5000)
+            except:
+                await update.message.reply_text("⚠️ Payment not found")
+
+            await asyncio.sleep(2)
+
+            await update.message.reply_text("🔄 Step 7: Buy...")
+
+            try:
+                await page.get_by_text("Buy now").click(timeout=5000)
+            except:
+                await update.message.reply_text("⚠️ Buy button not found")
+
             await asyncio.sleep(5)
 
             total = calc_total(php, br)
