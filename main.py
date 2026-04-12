@@ -1,19 +1,7 @@
 # -*- coding: utf-8 -*-
 
-import asyncio
-import subprocess
-import os
-from datetime import datetime
-
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-
-from playwright.async_api import async_playwright
-
-# =========================
-# 🔧 INSTALL PLAYWRIGHT
-# =========================
-subprocess.run(["playwright", "install", "chromium"])
 
 # =========================
 # 🔑 CONFIG
@@ -22,8 +10,8 @@ BOT_TOKEN = "8622345566:AAH1Uj7Hcl2bvHZ4AoOblRaY7qy_NbYUguA"
 OWNER_ID = 5392090963
 
 rates = {
-    "br": 83,
-    "php": 73
+    "br": 83.0,
+    "php": 73.0
 }
 
 # =========================
@@ -83,26 +71,73 @@ def mmk(x):
 # ▶️ START
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"🤖 Bot Ready\n🆔 {update.effective_user.id}")
+    user_id = update.effective_user.id
+
+    if user_id == OWNER_ID:
+        await update.message.reply_text(
+            f"🤖 MLBB Recharge Bot (Admin)\n\n"
+            f"🆔 {user_id}\n\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"📦 /list → Prices\n"
+            f"💱 /setbr 85\n"
+            f"💱 /setphp 75\n\n"
+            f"━━━━━━━━━━━━━━"
+        )
+    else:
+        await update.message.reply_text(
+            f"💎 MLBB Diamond Shop\n\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"💎 Send amount → 279\n"
+            f"🎫 Passes → wp / tp / wep / mep\n\n"
+            f"📦 /list → View prices\n"
+            f"━━━━━━━━━━━━━━"
+        )
 
 # =========================
 # 📦 LIST
 # =========================
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = "📦 PRODUCT LIST\n\n"
+    msg = "📦 DIAMONDS\n\n"
 
     for k, v in sorted(diamond_data.items()):
         php, br = v[1], v[2]
         total = calc_total(php, br)
         msg += f"{str(k).ljust(5)} → {mmk(total)}\n"
 
-    msg += "\n🎫 PASSES\n"
-    msg += "wp   → Weekly Pass\n"
-    msg += "tp   → Twilight Pass\n"
-    msg += "wep  → Weekly Elite Bundle\n"
-    msg += "mep  → Monthly Epic Bundle\n"
+    msg += "\n━━━━━━━━━━━━━━\n🎫 PASSES\n\n"
+
+    for key, val in special_products.items():
+        php, br = val[1], val[2]
+        total = calc_total(php, br)
+        msg += f"{key.ljust(5)} → {mmk(total)}\n"
+
+    msg += "\n━━━━━━━━━━━━━━\n"
+    msg += f"📊 Rates\nBR: {rates['br']} | PHP: {rates['php']}"
 
     await update.message.reply_text(msg)
+
+# =========================
+# 💱 SET RATES
+# =========================
+async def setbr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("⛔ Not allowed")
+        return
+    try:
+        rates["br"] = float(context.args[0])
+        await update.message.reply_text(f"✅ BR rate updated → {rates['br']}")
+    except:
+        await update.message.reply_text("❌ Usage: /setbr 85")
+
+async def setphp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("⛔ Not allowed")
+        return
+    try:
+        rates["php"] = float(context.args[0])
+        await update.message.reply_text(f"✅ PHP rate updated → {rates['php']}")
+    except:
+        await update.message.reply_text("❌ Usage: /setphp 75")
 
 # =========================
 # 💬 MESSAGE HANDLER
@@ -110,114 +145,32 @@ async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower()
 
+    # 💎 Diamonds
     if text.isdigit():
         num = int(text)
         if num in diamond_data:
             packs, php, br = diamond_data[num]
             total = calc_total(php, br)
 
-            msg = f"💎 {num}\n\n"
+            msg = f"💎 {num} Diamonds\n\n📦 Packs:\n"
             for p in packs:
                 msg += f"• {p}\n"
 
-            msg += f"\n💰 BR: {br}\nPHP: {php}\n"
-            msg += f"\n💵 {mmk(total)}"
+            msg += f"\n💰 Cost:\nBR: {br}\nPHP: {php}\n"
+            msg += f"\n💵 Total: {mmk(total)}"
 
             await update.message.reply_text(msg)
 
+    # 🎫 Passes
     elif text in special_products:
         name, php, br = special_products[text]
         total = calc_total(php, br)
 
-        msg = f"🎫 {text.upper()}\n\n"
-        msg += f"• {name[0]}\n"
-        msg += f"\n💰 BR: {br}\nPHP: {php}\n"
+        msg = f"🎫 {name[0]}\n\n"
+        msg += f"💰 Cost:\nBR: {br}\nPHP: {php}\n"
         msg += f"\n💵 {mmk(total)}"
 
         await update.message.reply_text(msg)
-
-# =========================
-# ⚙️ RECHARGE (DEBUG)
-# =========================
-async def recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
-        await update.message.reply_text("⛔ Not allowed")
-        return
-
-    try:
-        uid, zone, product, qty = context.args
-        product = int(product)
-    except:
-        await update.message.reply_text("❌ Usage:\n/recharge UID ZONE PRODUCT QTY")
-        return
-
-    await update.message.reply_text("🔄 Step 1: Starting...")
-
-    try:
-        async with async_playwright() as p:
-            await update.message.reply_text("🔄 Step 2: Launch browser...")
-
-            browser = await p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
-            )
-
-            page = await browser.new_page()
-
-            await update.message.reply_text("🔄 Step 3: Open site...")
-            await page.goto("https://www.smile.one", timeout=60000)
-
-            await page.wait_for_timeout(5000)
-
-            await update.message.reply_text("🔄 Step 4: Fill UID...")
-            await page.get_by_placeholder("User ID").fill(uid)
-            await page.get_by_placeholder("Zone ID").fill(zone)
-
-            await asyncio.sleep(3)
-
-            packs, php, br = diamond_data[product]
-
-            await update.message.reply_text("🔄 Step 5: Select packs...")
-
-            for p_name in packs:
-                try:
-                    text = p_name.split(" ")[0]
-                    await page.get_by_text(text).first.click(timeout=5000)
-                    await asyncio.sleep(1.5)
-                except:
-                    await update.message.reply_text(f"⚠️ Pack not found: {p_name}")
-
-            await update.message.reply_text("🔄 Step 6: Payment...")
-
-            try:
-                await page.get_by_text("SmileCoin").click(timeout=5000)
-            except:
-                await update.message.reply_text("⚠️ Payment not found")
-
-            await asyncio.sleep(2)
-
-            await update.message.reply_text("🔄 Step 7: Buy...")
-
-            try:
-                await page.get_by_text("Buy now").click(timeout=5000)
-            except:
-                await update.message.reply_text("⚠️ Buy button not found")
-
-            await asyncio.sleep(5)
-
-            total = calc_total(php, br)
-
-            await update.message.reply_text(
-                f"✅ SUCCESS\n\n"
-                f"🆔 {uid} ({zone})\n"
-                f"📦 {product}\n\n"
-                f"💵 {mmk(total)}"
-            )
-
-            await browser.close()
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error:\n{e}")
 
 # =========================
 # 🚀 RUN
@@ -226,7 +179,8 @@ app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("list", list_cmd))
-app.add_handler(CommandHandler("recharge", recharge))
+app.add_handler(CommandHandler("setbr", setbr))
+app.add_handler(CommandHandler("setphp", setphp))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 app.run_polling()
